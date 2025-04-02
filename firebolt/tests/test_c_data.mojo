@@ -133,6 +133,17 @@ def test_list_array_from_pyarrow():
     )
 
 
+def test_parquet_file():
+    # open the test parquet file
+    var pq = Python.import_module("pyarrow.parquet")
+
+    var table = pq.read_table("test_data/test_file.parquet")
+    var array_stream = CArrowArrayStream.from_pyarrow(table)
+    var c_schema = array_stream.c_schema()
+    var schema = c_schema.to_dtype()
+    assert_equal(len(schema.fields), 19)
+
+
 # def test_schema_to_pyarrow():
 #     var pa = Python.import_module("pyarrow")
 

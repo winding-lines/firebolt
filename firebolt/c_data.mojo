@@ -1,8 +1,9 @@
-from memory import UnsafePointer, ArcPointer
+from memory import UnsafePointer, ArcPointer, memcpy
+from sys import sizeof
 
 import math
 from python import Python, PythonObject
-from sys.ffi import c_char
+from sys.ffi import c_char, OpaquePointer
 
 from .dtypes import *
 from .arrays import *
@@ -245,3 +246,53 @@ struct CArrowArray:
             buffers=buffers,
             children=children,
         )
+
+
+# See: https://arrow.apache.org/docs/format/CStreamInterface.html
+
+alias GetSchemaFunction = fn (
+    stream: UnsafePointer[CArrowArrayStream], out: UnsafePointer[CArrowSchema]
+) -> UInt
+
+alias GetNextFunction = fn (
+    stream: UnsafePointer[CArrowArrayStream], out: UnsafePointer[CArrowArray]
+) -> UInt
+
+alias GetLastError = fn (
+    stream: UnsafePointer[CArrowArrayStream],
+) -> UnsafePointer[c_char]
+
+alias ReleaseStream = fn (stream: UnsafePointer[CArrowArrayStream],) -> None
+
+
+@value
+struct CArrowArrayStream:
+    # Callbacks providing stream functionality
+    var get_schema: GetSchemaFunction
+    var get_next: GetNextFunction
+    var get_last_error: GetLastError
+
+    # Release callback
+    var release: ReleaseStream
+
+    # Opaque producer-specific data
+    var private_data: OpaquePointer
+
+    @staticmethod
+    fn from_pyarrow(pyobj: PythonObject) raises -> CArrowArrayStream:
+        """Ask a PyArrow table for its arrow array stream interface."""
+        var ptr = UnsafePointer[CArrowArrayStream].alloc(1)
+        memcpy(
+            ptr.bitcast[Byte](),
+            UnsafePointer(to=pyobj.__arrow_c_stream__).bitcast[Byte](),
+            sizeof[CArrowArrayStream](),
+        )
+        return ptr.take_pointee()
+
+    fn c_schema(self) raises -> CArrowSchema:
+        """Return the C variant of the Arrow Schema."""
+        var schema = UnsafePointer[CArrowSchema].alloc(1)
+        var err = self.get_schema(UnsafePointer.address_of(self), schema)
+        if err != 0:
+            raise Error("Failed to get schema")
+        return schema.take_pointee()
