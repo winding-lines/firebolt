@@ -58,15 +58,63 @@ struct ArrayData(Movable):
     fn as_list(self) raises -> ListArray:
         return ListArray(self)
 
+    fn _drop_nulls[
+        T: DType
+    ](
+        mut self, buffer: ArcPointer[Buffer], buffer_start: Int, buffer_end: Int
+    ) -> None:
+        """Drop nulls from the Array.
 
-struct ChunkedArray:
-    var dtype: DataType
-    var length: Int
-    var chunks: List[ArrayData]
+        The approach is the following:
+           - find a run of nulls
+           - find the run of valid entries after the run of nulls
+           - move the valid entries to overwrite the run of nulls
+           - repeat
+        """
+        var start = buffer_start
+        while start < buffer_end:
+            if self.bitmap[].unsafe_get(start):
+                print("Skipping valid value at ", start)
+                start += 1
+                continue
 
-    fn __init__(out self, dtype: DataType, chunks: List[ArrayData]):
-        self.dtype = dtype
-        self.chunks = chunks
-        self.length = 0
-        for chunk in chunks:
-            self.length += chunk[].length
+            # Find the end of the run of nulls, could be just one null.
+            var end_nulls = start
+            while start < buffer_end and not self.bitmap[].unsafe_get(
+                end_nulls
+            ):
+                end_nulls += 1
+
+            # Find the end of the run of values.
+            var end_values = end_nulls
+            while end_nulls < buffer_end and self.bitmap[].unsafe_get(
+                end_values
+            ):
+                end_values += 1
+            values_len = end_values - end_nulls
+
+            # Compact the data.
+            memcpy(
+                buffer[].offset(start),
+                buffer[].offset(end_nulls),
+                values_len * sizeof[T](),
+            )
+            # Adjust the bitmp
+            for i in range(start, end_values):
+                self.bitmap[].unsafe_set(i, (i - start) < values_len)
+
+            # Get ready for next iteration.
+            start += values_len
+
+    fn drop_nulls[T: DType](mut self) -> None:
+        """Drops null values from the Array.
+
+        Currently we drop nulls from individual buffers, we do not delete buffers.
+        """
+        # Track the start position in the validity bitmap.
+        var buffer_start = 0
+        for buffer_index in range(len(self.buffers)):
+            var buffer = self.buffers[buffer_index]
+            buffer_end = buffer_start + buffer[].length[T]()
+            self._drop_nulls[T](buffer, buffer_start, buffer_end)
+            buffer_start = buffer_end

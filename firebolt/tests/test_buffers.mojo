@@ -82,3 +82,9 @@ def test_expand_bitmap() -> None:
     assert_true(bitmap.unsafe_get(6))
     assert_false(bitmap.unsafe_get(10))
 
+
+def test_drop_nulls() -> None:
+    var content = UnsafePointer[UInt8].alloc(10)
+    var buffer = Buffer(content, 1)
+    buffer.unsafe_set[DType.uint8](0, 0)
+    buffer.unsafe_set[DType.uint8](5, 15)
