@@ -10,7 +10,7 @@ struct ListArray(Array):
     var values: ArcPointer[ArrayData]
     var capacity: Int
 
-    fn __init__(out self, data: ArrayData) raises:
+    fn __init__(out self, var data: ArrayData) raises:
         if not data.dtype.is_list():
             raise Error(
                 "Unexpected dtype {} instead of 'list'".format(data.dtype)
@@ -20,11 +20,11 @@ struct ListArray(Array):
         elif len(data.children) != 1:
             raise Error("ListArray requires exactly one child array")
 
-        self.data = data
         self.bitmap = data.bitmap
         self.offsets = data.buffers[0]
         self.values = data.children[0]
         self.capacity = data.length
+        self.data = data^
 
     fn __init__[T: Array](out self, var values: T, capacity: Int = 1):
         """Initialize a list with the given values.
@@ -35,8 +35,8 @@ struct ListArray(Array):
             values: Array to use as the first element in the ListArray.
             capacity: The capacity of the ListArray.
         """
-        var values_data = values.as_data()
-        var list_dtype = list_(values_data.dtype)
+        var values_data = values^.take_data()
+        var list_dtype = list_(values_data.dtype.copy())
 
         var bitmap = Bitmap.alloc(capacity)
         bitmap.unsafe_set(0, True)
@@ -45,15 +45,12 @@ struct ListArray(Array):
         offsets.unsafe_set[DType.uint32](1, values_data.length)
 
         self.capacity = capacity
-        self.bitmap = ArcPointer(bitmap^)
-        self.offsets = ArcPointer(offsets^)
-        self.values = ArcPointer(values_data^)
         self.data = ArrayData(
-            dtype=list_dtype,
+            dtype=list_dtype^,
             length=1,
             bitmap=self.bitmap,
-            buffers=List(self.offsets),
-            children=List(self.values),
+            buffers=List(ArcPointer(offsets^)),
+            children=List(ArcPointer(values^)),
             offset=0,
         )
 
@@ -67,8 +64,11 @@ struct ListArray(Array):
     fn __len__(self) -> Int:
         return self.data.length
 
-    fn as_data(self) -> ArrayData:
+    fn as_data(var self) -> ref [self] ArrayData:
         return self.data
+
+    fn take_data(deinit self) -> ArrayData:
+        return self.data^
 
     fn is_valid(self, index: Int) -> Bool:
         return self.bitmap[].unsafe_get(index)
@@ -93,12 +93,12 @@ struct ListArray(Array):
         )
         ref first_child = self.data.children[0][]
         return ArrayData(
-            dtype=first_child.dtype,
+            dtype=first_child.dtype.copy(),
             bitmap=first_child.bitmap,
-            buffers=first_child.buffers,
+            buffers=first_child.buffers.copy(),
             offset=start,
             length=end - start,
-            children=first_child.children,
+            children=first_child.children.copy(),
         )
 
     fn write_to[W: Writer](self, mut writer: W):
@@ -144,7 +144,7 @@ struct StructArray(Array):
         self.bitmap = ArcPointer(bitmap^)
         self.fields = fields^
         self.data = ArrayData(
-            dtype=struct_dtype,
+            dtype=struct_dtype^,
             length=0,
             bitmap=self.bitmap,
             buffers=List[ArcPointer[Buffer]](),
@@ -161,8 +161,8 @@ struct StructArray(Array):
     fn __len__(self) -> Int:
         return self.data.length
 
-    fn as_data(self) -> ArrayData:
-        return self.data
+    fn as_data(var self) -> ArrayData:
+        return self.data^
 
     fn write_to[W: Writer](self, mut writer: W):
         """
